@@ -1,195 +1,274 @@
-// State
-let rawMediaData = null;
-let currentPlaylist = [];
-let currentIndex = 0;
-let isPlaying = true;
-let slideInterval = null;
-let timerDuration = 4000;
+// --- Constants & Config ---
+const DEFAULT_TIMER_DURATION_MS = 4000;
+const MIN_TIMER_DURATION_MS = 1000;
 
-// Keybindings State
-let keybinds = {
-    next: 'ArrowRight',
-    prev: 'ArrowLeft',
-    play: ' ',
-    speedup: 'ArrowUp',
-    speeddown: 'ArrowDown',
-    sidebar: 's'
+const ICONS = {
+    PLAY: '▶',
+    PAUSE: '⏸'
 };
 
-// DOM Elements
-const imgEl = document.getElementById('current-image');
-const videoEl = document.getElementById('current-video');
-const playPauseBtn = document.getElementById('play-pause-btn');
-const prevBtn = document.getElementById('prev-btn');
-const nextBtn = document.getElementById('next-btn');
-const sidebarToggle = document.getElementById('sidebar-toggle');
-const sidebar = document.getElementById('sidebar');
-const modeSelect = document.getElementById('mode-select');
-const typeImageCb = document.getElementById('type-image');
-const typeGifCb = document.getElementById('type-gif');
-const typeVideoCb = document.getElementById('type-video');
-const timerInput = document.getElementById('timer-input');
-const downloadBtn = document.getElementById('download-current-btn');
+const LOG_LEVELS = {
+    INFO: 'INFO',
+    WARN: 'WARN',
+    ERROR: 'ERROR'
+};
 
-// Initialization
-document.addEventListener('DOMContentLoaded', () => {
-    // Load extracted data and settings from storage
+// --- Structured Logger ---
+const logger = {
+    log: (level, message, context = {}) => {
+        const entry = { timestamp: new Date().toISOString(), level, message, ...context };
+        console[level.toLowerCase() === 'error' ? 'error' : (level.toLowerCase() === 'warn' ? 'warn' : 'log')](JSON.stringify(entry));
+    },
+    info: (msg, ctx) => logger.log(LOG_LEVELS.INFO, msg, ctx),
+    warn: (msg, ctx) => logger.log(LOG_LEVELS.WARN, msg, ctx),
+    error: (msg, ctx) => logger.log(LOG_LEVELS.ERROR, msg, ctx)
+};
+
+// --- State Management ---
+class SlideshowState {
+    constructor() {
+        this.rawMediaData = null;
+        this.currentPlaylist = [];
+        this.currentIndex = 0;
+        this.isPlaying = false;
+        this.slideInterval = null;
+        this.timerDuration = DEFAULT_TIMER_DURATION_MS;
+
+        this.keybinds = {
+            next: 'ArrowRight',
+            prev: 'ArrowLeft',
+            play: ' ',
+            speedup: 'ArrowUp',
+            speeddown: 'ArrowDown',
+            sidebar: 's'
+        };
+    }
+
+    setMediaData(data) {
+        if (!data || typeof data !== 'object') {
+            logger.error('Invalid media data provided to state');
+            this.rawMediaData = {};
+            return;
+        }
+        this.rawMediaData = data;
+    }
+
+    updateKeybinds(newKeybinds) {
+        if (newKeybinds && typeof newKeybinds === 'object') {
+            this.keybinds = { ...this.keybinds, ...newKeybinds };
+        }
+    }
+}
+
+const state = new SlideshowState();
+
+// --- DOM Elements ---
+const elements = {
+    img: document.getElementById('current-image'),
+    video: document.getElementById('current-video'),
+    playPauseBtn: document.getElementById('play-pause-btn'),
+    prevBtn: document.getElementById('prev-btn'),
+    nextBtn: document.getElementById('next-btn'),
+    sidebarToggle: document.getElementById('sidebar-toggle'),
+    sidebar: document.getElementById('sidebar'),
+    modeSelect: document.getElementById('mode-select'),
+    typeImageCb: document.getElementById('type-image'),
+    typeGifCb: document.getElementById('type-gif'),
+    typeVideoCb: document.getElementById('type-video'),
+    timerInput: document.getElementById('timer-input'),
+    downloadBtn: document.getElementById('download-current-btn')
+};
+
+// --- Initialization ---
+document.addEventListener('DOMContentLoaded', initializeSlideshow);
+
+function initializeSlideshow() {
     chrome.storage.local.get(['extractedMediaData', 'keybinds'], (result) => {
         if (result.keybinds) {
-            keybinds = { ...keybinds, ...result.keybinds };
+            state.updateKeybinds(result.keybinds);
             updateKeybindUI();
         }
 
         if (result.extractedMediaData) {
-            rawMediaData = result.extractedMediaData;
+            state.setMediaData(result.extractedMediaData);
             buildPlaylist();
             showMedia(0);
             startSlideshow();
         } else {
-            console.error("No media data found.");
+            logger.error("No media data found in local storage.");
         }
     });
 
     setupEventListeners();
-});
+}
 
+// --- UI Updates ---
 function updateKeybindUI() {
-    document.getElementById('key-next').value = keybinds.next;
-    document.getElementById('key-prev').value = keybinds.prev;
-    document.getElementById('key-play').value = keybinds.play;
-    document.getElementById('key-speedup').value = keybinds.speedup;
-    document.getElementById('key-speeddown').value = keybinds.speeddown;
-    document.getElementById('key-sidebar').value = keybinds.sidebar;
+    const safeSetVal = (id, val) => {
+        const el = document.getElementById(id);
+        if (el) el.value = val;
+    };
+    safeSetVal('key-next', state.keybinds.next);
+    safeSetVal('key-prev', state.keybinds.prev);
+    safeSetVal('key-play', state.keybinds.play);
+    safeSetVal('key-speedup', state.keybinds.speedup);
+    safeSetVal('key-speeddown', state.keybinds.speeddown);
+    safeSetVal('key-sidebar', state.keybinds.sidebar);
 }
 
 function saveKeybinds() {
-    chrome.storage.local.set({ keybinds: keybinds });
+    chrome.storage.local.set({ keybinds: state.keybinds }, () => {
+        if (chrome.runtime.lastError) {
+            logger.error('Failed to save keybinds', { error: chrome.runtime.lastError.message });
+        }
+    });
 }
 
-// Build Playlist based on settings
+// --- Core Logic ---
 function buildPlaylist() {
-    if (!rawMediaData) return;
+    if (!state.rawMediaData) return;
 
-    const mode = modeSelect.value;
-    let selectedList = rawMediaData[mode] || [];
+    const mode = elements.modeSelect.value;
+    const selectedList = state.rawMediaData[mode] || [];
 
-    // Filter by type
-    const allowImage = typeImageCb.checked;
-    const allowGif = typeGifCb.checked;
-    const allowVideo = typeVideoCb.checked;
+    const allowImage = elements.typeImageCb.checked;
+    const allowGif = elements.typeGifCb.checked;
+    const allowVideo = elements.typeVideoCb.checked;
 
-    currentPlaylist = selectedList.filter(item => {
+    state.currentPlaylist = selectedList.filter(item => {
+        if (!item || !item.type) return false;
         if (item.type === 'image' && !allowImage) return false;
         if (item.type === 'gif' && !allowGif) return false;
         if (item.type === 'video' && !allowVideo) return false;
         return true;
     });
 
-    currentIndex = 0;
-    if (currentPlaylist.length > 0) {
-        showMedia(currentIndex);
+    state.currentIndex = 0;
+
+    if (state.currentPlaylist.length > 0) {
+        showMedia(state.currentIndex);
     } else {
-        imgEl.style.display = 'none';
-        videoEl.style.display = 'none';
-        // Could show a 'No media found for current filters' message here
+        elements.img.style.display = 'none';
+        elements.video.style.display = 'none';
+        logger.info('No media matched the current filter criteria.');
     }
 }
 
-// Display Media
-function showMedia(index) {
-    if (currentPlaylist.length === 0) return;
+async function showMedia(index) {
+    if (state.currentPlaylist.length === 0) return;
 
-    // Wrap around
-    if (index >= currentPlaylist.length) currentIndex = 0;
-    else if (index < 0) currentIndex = currentPlaylist.length - 1;
-    else currentIndex = index;
+    if (index >= state.currentPlaylist.length) state.currentIndex = 0;
+    else if (index < 0) state.currentIndex = state.currentPlaylist.length - 1;
+    else state.currentIndex = index;
 
-    const media = currentPlaylist[currentIndex];
+    const media = state.currentPlaylist[state.currentIndex];
+
+    if (!media || !media.url) {
+        logger.error('Invalid media item in playlist', { index: state.currentIndex });
+        return;
+    }
 
     if (media.type === 'video') {
-        imgEl.style.display = 'none';
-        videoEl.style.display = 'block';
-        videoEl.src = media.url;
-        videoEl.play().catch(e => console.log("Auto-play prevented"));
+        elements.img.style.display = 'none';
+        elements.video.style.display = 'block';
+        elements.video.src = media.url;
+
+        try {
+            await elements.video.play();
+        } catch (error) {
+            logger.warn('Video autoplay prevented or failed', { error: error.message, url: media.url });
+        }
     } else {
-        videoEl.style.display = 'none';
-        videoEl.pause();
-        imgEl.style.display = 'block';
-        imgEl.src = media.url;
+        elements.video.style.display = 'none';
+        elements.video.pause();
+        elements.img.style.display = 'block';
+        elements.img.src = media.url;
     }
 
-    // Preload next image if possible
-    if (currentPlaylist.length > 1) {
-        let nextIndex = (currentIndex + 1) % currentPlaylist.length;
-        let nextMedia = currentPlaylist[nextIndex];
-        if (nextMedia.type !== 'video') {
-            const preload = new Image();
-            preload.src = nextMedia.url;
-        }
+    preloadNextMedia();
+}
+
+function preloadNextMedia() {
+    if (state.currentPlaylist.length <= 1) return;
+
+    const nextIndex = (state.currentIndex + 1) % state.currentPlaylist.length;
+    const nextMedia = state.currentPlaylist[nextIndex];
+
+    if (nextMedia && nextMedia.type !== 'video' && nextMedia.url) {
+        const preload = new Image();
+        preload.src = nextMedia.url;
     }
 }
 
-// Slideshow Controls
+// --- Playback Controls ---
 function startSlideshow() {
-    if (slideInterval) clearInterval(slideInterval);
-    isPlaying = true;
-    playPauseBtn.innerHTML = '&#10074;&#10074;'; // Pause icon
-    slideInterval = setInterval(() => {
-        showMedia(currentIndex + 1);
-    }, timerDuration);
+    if (state.slideInterval) clearInterval(state.slideInterval);
+    state.isPlaying = true;
+    elements.playPauseBtn.textContent = ICONS.PAUSE;
+
+    state.slideInterval = setInterval(() => {
+        showMedia(state.currentIndex + 1);
+    }, state.timerDuration);
 }
 
 function stopSlideshow() {
-    if (slideInterval) clearInterval(slideInterval);
-    isPlaying = false;
-    playPauseBtn.innerHTML = '&#9654;'; // Play icon
+    if (state.slideInterval) {
+        clearInterval(state.slideInterval);
+        state.slideInterval = null;
+    }
+    state.isPlaying = false;
+    elements.playPauseBtn.textContent = ICONS.PLAY;
 }
 
 function togglePlay() {
-    if (isPlaying) stopSlideshow();
+    if (state.isPlaying) stopSlideshow();
     else startSlideshow();
 }
 
 function nextSlide() {
     stopSlideshow();
-    showMedia(currentIndex + 1);
+    showMedia(state.currentIndex + 1);
 }
 
 function prevSlide() {
     stopSlideshow();
-    showMedia(currentIndex - 1);
+    showMedia(state.currentIndex - 1);
 }
 
-// Download logic
 function downloadCurrent() {
-    if (currentPlaylist.length === 0) return;
-    const url = currentPlaylist[currentIndex].url;
-    chrome.downloads.download({ url: url });
+    if (state.currentPlaylist.length === 0) return;
+
+    const media = state.currentPlaylist[state.currentIndex];
+    if (media && media.url) {
+        chrome.downloads.download({ url: media.url }, (downloadId) => {
+            if (chrome.runtime.lastError) {
+                logger.error('Download failed', { error: chrome.runtime.lastError.message, url: media.url });
+            }
+        });
+    }
 }
 
-// Event Listeners setup
+// --- Event Listeners ---
 function setupEventListeners() {
-    // UI Buttons
-    playPauseBtn.addEventListener('click', togglePlay);
-    nextBtn.addEventListener('click', nextSlide);
-    prevBtn.addEventListener('click', prevSlide);
-    sidebarToggle.addEventListener('click', () => sidebar.classList.toggle('open'));
-    downloadBtn.addEventListener('click', downloadCurrent);
+    elements.playPauseBtn.addEventListener('click', togglePlay);
+    elements.nextBtn.addEventListener('click', nextSlide);
+    elements.prevBtn.addEventListener('click', prevSlide);
+    elements.sidebarToggle.addEventListener('click', () => elements.sidebar.classList.toggle('open'));
+    elements.downloadBtn.addEventListener('click', downloadCurrent);
 
-    // Settings changes
-    modeSelect.addEventListener('change', buildPlaylist);
-    typeImageCb.addEventListener('change', buildPlaylist);
-    typeGifCb.addEventListener('change', buildPlaylist);
-    typeVideoCb.addEventListener('change', buildPlaylist);
+    elements.modeSelect.addEventListener('change', buildPlaylist);
+    elements.typeImageCb.addEventListener('change', buildPlaylist);
+    elements.typeGifCb.addEventListener('change', buildPlaylist);
+    elements.typeVideoCb.addEventListener('change', buildPlaylist);
 
-    timerInput.addEventListener('change', (e) => {
+    elements.timerInput.addEventListener('change', (e) => {
         let val = parseInt(e.target.value, 10);
-        if (val < 1) val = 1;
-        timerDuration = val * 1000;
-        if (isPlaying) startSlideshow(); // Restart with new interval
+        if (isNaN(val) || val < 1) val = 1;
+
+        state.timerDuration = Math.max(val * 1000, MIN_TIMER_DURATION_MS);
+        if (state.isPlaying) startSlideshow();
     });
 
-    // Keybind Remapping Logic
     const keybindInputs = document.querySelectorAll('.keybind-input');
     keybindInputs.forEach(input => {
         input.addEventListener('keydown', (e) => {
@@ -197,46 +276,54 @@ function setupEventListeners() {
             const action = input.id.replace('key-', '');
             const newKey = e.key;
 
-            // Allow Escape to cancel rebinding without saving
             if (newKey === 'Escape') {
                 input.blur();
                 return;
             }
 
-            keybinds[action] = newKey === ' ' ? ' ' : newKey;
-            input.value = newKey;
-            saveKeybinds();
-            input.blur(); // Remove focus after mapping
+            if (state.keybinds.hasOwnProperty(action)) {
+                state.keybinds[action] = newKey === ' ' ? ' ' : newKey;
+                input.value = newKey;
+                saveKeybinds();
+            }
+            input.blur();
         });
     });
 
-    // Keyboard bindings (Hotkeys)
-    document.addEventListener('keydown', (e) => {
-        // Ignore if focus is in an input field (unless we are remapping)
-        if (e.target.classList.contains('keybind-input')) return;
-        if (e.target.tagName.toLowerCase() === 'input' || e.target.tagName.toLowerCase() === 'select') return;
+    document.addEventListener('keydown', handleGlobalKeydown);
+}
 
-        const key = e.key;
+function handleGlobalKeydown(e) {
+    if (e.target.classList.contains('keybind-input')) return;
 
-        if (key === keybinds.next) {
-            nextSlide();
-        } else if (key === keybinds.prev) {
-            prevSlide();
-        } else if (key === keybinds.play) {
-            e.preventDefault(); // Prevent scrolling if space
-            togglePlay();
-        } else if (key === keybinds.speedup) {
-            e.preventDefault();
-            timerInput.value = parseInt(timerInput.value, 10) + 1;
-            timerInput.dispatchEvent(new Event('change'));
-        } else if (key === keybinds.speeddown) {
-            e.preventDefault();
-            if (parseInt(timerInput.value, 10) > 1) {
-                timerInput.value = parseInt(timerInput.value, 10) - 1;
-                timerInput.dispatchEvent(new Event('change'));
-            }
-        } else if (key === keybinds.sidebar || key === keybinds.sidebar.toLowerCase() || key === keybinds.sidebar.toUpperCase()) {
-            sidebar.classList.toggle('open');
+    const tagName = e.target.tagName.toLowerCase();
+    if (tagName === 'input' || tagName === 'select' || tagName === 'textarea') return;
+
+    const key = e.key;
+    const isSidebarKey = key === state.keybinds.sidebar ||
+                         key === state.keybinds.sidebar.toLowerCase() ||
+                         key === state.keybinds.sidebar.toUpperCase();
+
+    if (key === state.keybinds.next) {
+        nextSlide();
+    } else if (key === state.keybinds.prev) {
+        prevSlide();
+    } else if (key === state.keybinds.play) {
+        e.preventDefault();
+        togglePlay();
+    } else if (key === state.keybinds.speedup) {
+        e.preventDefault();
+        const currentVal = parseInt(elements.timerInput.value, 10) || 1;
+        elements.timerInput.value = currentVal + 1;
+        elements.timerInput.dispatchEvent(new Event('change'));
+    } else if (key === state.keybinds.speeddown) {
+        e.preventDefault();
+        const currentVal = parseInt(elements.timerInput.value, 10) || 1;
+        if (currentVal > 1) {
+            elements.timerInput.value = currentVal - 1;
+            elements.timerInput.dispatchEvent(new Event('change'));
         }
-    });
+    } else if (isSidebarKey) {
+        elements.sidebar.classList.toggle('open');
+    }
 }

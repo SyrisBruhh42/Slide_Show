@@ -4,209 +4,249 @@
  */
 
 (function() {
-    // Prevent re-injection errors
+    // --- State Initialization ---
     if (window.hasMediaIsolatorInjected) return;
     window.hasMediaIsolatorInjected = true;
 
-// Heuristics to identify non-content media
-const IGNORE_TERMS = ['ad', 'avatar', 'icon', 'banner', 'logo', 'profile', 'thumbnail', 'thumb', 'sprite', 'tracker', 'pixel'];
+    // --- Configuration & Constants ---
+    const MIN_MEDIA_DIMENSION = 150;
 
-function shouldIgnoreElement(el) {
-    // 1. Size check
-    const rect = el.getBoundingClientRect();
-    if (rect.width > 0 && rect.height > 0) {
-        if (rect.width < 150 || rect.height < 150) {
+    const IGNORE_TERMS = [
+        'ad', 'avatar', 'icon', 'banner', 'logo', 'profile',
+        'thumbnail', 'thumb', 'sprite', 'tracker', 'pixel'
+    ];
+
+    const MEDIA_TYPES = {
+        IMAGE: 'image',
+        VIDEO: 'video',
+        GIF: 'gif'
+    };
+
+    const SITE_SELECTORS = {
+        DEVIANTART: 'img[data-hook="art_stage"], img[fetchpriority="high"]',
+        REDDIT: 'shreddit-post img, shreddit-post video, [data-test-id="post-content"] img, [data-test-id="post-content"] video',
+        MIDJOURNEY: '[role="gridcell"] img',
+        GOOGLE: 'img[jsname="kn3ccd"]'
+    };
+
+    // --- Validation & Schemas ---
+    function isValidRequest(request) {
+        return request && typeof request === 'object' && typeof request.action === 'string';
+    }
+
+    // --- Core Utility Functions ---
+    function resolveAbsoluteUrl(src) {
+        if (!src) return '';
+        try {
+            return new URL(src, window.location.href).href;
+        } catch (error) {
+            // Unparseable URLs are generally invalid resources
+            return '';
+        }
+    }
+
+    function checkTermsInAttributes(el) {
+        const attributes = [
+            (el.className || '').toString(),
+            (el.id || ''),
+            (el.src || ''),
+            (el.alt || '')
+        ].map(attr => attr.toLowerCase());
+
+        return IGNORE_TERMS.some(term =>
+            attributes.some(attr => attr.includes(term))
+        );
+    }
+
+    function isTooSmall(rect) {
+        if (rect.width <= 0 || rect.height <= 0) return true;
+        return rect.width < MIN_MEDIA_DIMENSION || rect.height < MIN_MEDIA_DIMENSION;
+    }
+
+    function shouldIgnoreElement(el) {
+        const rect = el.getBoundingClientRect();
+
+        if (isTooSmall(rect)) return true;
+        if (checkTermsInAttributes(el)) return true;
+
+        const parentContainer = el.closest('a, figure, div');
+        if (parentContainer && checkTermsInAttributes(parentContainer)) {
             return true;
         }
+
+        return false;
     }
 
-    // 2. Class, ID, and src attribute checks
-    const classStr = (el.className || '').toString().toLowerCase();
-    const idStr = (el.id || '').toLowerCase();
-    const srcStr = (el.src || '').toLowerCase();
-    const altStr = (el.alt || '').toLowerCase();
-
-    for (const term of IGNORE_TERMS) {
-        if (classStr.includes(term) || idStr.includes(term) || srcStr.includes(term) || altStr.includes(term)) {
-            return true;
-        }
+    function determineMediaType(src, tagName) {
+        if (tagName === 'video') return MEDIA_TYPES.VIDEO;
+        if (src && src.toLowerCase().endsWith('.gif')) return MEDIA_TYPES.GIF;
+        return MEDIA_TYPES.IMAGE;
     }
 
-    // Check closest anchor or figure class/id too
-    const parent = el.closest('a, figure, div');
-    if (parent) {
-        const pClass = (parent.className || '').toString().toLowerCase();
-        const pId = (parent.id || '').toLowerCase();
-        for (const term of IGNORE_TERMS) {
-            if (pClass.includes(term) || pId.includes(term)) {
-                return true;
-            }
-        }
+    function getSrcsetLargest(srcset) {
+        const sources = srcset.split(',').map(s => {
+            const parts = s.trim().split(/\s+/);
+            const url = parts[0];
+            const widthMatch = parts[1] && parts[1].endsWith('w') ? parts[1].slice(0, -1) : '0';
+            return { url, width: parseInt(widthMatch, 10) };
+        });
+
+        sources.sort((a, b) => b.width - a.width);
+        return sources.length > 0 && sources[0].width > 0 ? sources[0].url : null;
     }
 
-    return false;
-}
-
-function getHighestResolutionSource(el) {
-    let src = el.src || el.currentSrc;
-    let type = el.tagName.toLowerCase() === 'video' ? 'video' : 'image';
-    let isGif = src && src.toLowerCase().endsWith('.gif');
-    if (isGif) type = 'gif';
-
-    if (type === 'image') {
-        // Check for srcset to get the largest image
-        if (el.srcset) {
-            const sources = el.srcset.split(',').map(s => {
-                const parts = s.trim().split(/\s+/);
-                const url = parts[0];
-                let width = 0;
-                if (parts.length > 1 && parts[1].endsWith('w')) {
-                    width = parseInt(parts[1].slice(0, -1), 10);
-                }
-                return { url, width };
-            });
-            sources.sort((a, b) => b.width - a.width);
-            if (sources.length > 0 && sources[0].width > 0) {
-                src = sources[0].url;
-            }
-        }
-
-        // Try finding high res src from parent anchor if it links to an image
+    function getAnchorImageSource(el) {
         const parentAnchor = el.closest('a');
         if (parentAnchor && parentAnchor.href && /\.(png|jpg|jpeg|webp|gif)$/i.test(parentAnchor.href)) {
-            src = parentAnchor.href;
-            if (src.toLowerCase().endsWith('.gif')) {
-                type = 'gif';
-            }
+            return parentAnchor.href;
         }
+        return null;
     }
 
-    // Attempt absolute URL resolution
-    try {
-        src = new URL(src, window.location.href).href;
-    } catch (e) {}
+    function getHighestResolutionSource(el) {
+        let src = el.src || el.currentSrc;
+        const tagName = el.tagName.toLowerCase();
+        let type = determineMediaType(src, tagName);
 
-    return { url: src, type, el };
-}
+        if (type === MEDIA_TYPES.IMAGE) {
+            if (el.srcset) {
+                const largestSrcset = getSrcsetLargest(el.srcset);
+                if (largestSrcset) src = largestSrcset;
+            }
 
-function extractMedia() {
-    const rawElements = Array.from(document.querySelectorAll('img, video'));
-
-    let mediaList = [];
-    let strictProminent = null;
-    let maxArea = 0;
-
-    for (const el of rawElements) {
-        if (!el.src && !el.currentSrc && el.tagName.toLowerCase() !== 'video') {
-            const source = el.querySelector('source');
-            if (!source || (!source.src && !source.srcset)) {
-                continue;
+            const anchorSrc = getAnchorImageSource(el);
+            if (anchorSrc) {
+                src = anchorSrc;
+                if (src.toLowerCase().endsWith('.gif')) type = MEDIA_TYPES.GIF;
             }
         }
 
-        const rect = el.getBoundingClientRect();
-        const area = rect.width * rect.height;
-        const isIgnored = shouldIgnoreElement(el);
-
-        const mediaData = getHighestResolutionSource(el);
-
-        if (!mediaData.url) continue;
-
-        // "Loose" mode gets everything > 0 size
-        if (area > 0) {
-            const item = {
-                url: mediaData.url,
-                type: mediaData.type,
-                width: rect.width,
-                height: rect.height,
-                isIgnored: isIgnored,
-                area: area
-            };
-
-            // Deduplicate
-            if (!mediaList.some(m => m.url === item.url)) {
-                mediaList.push(item);
-            }
-        }
+        const absoluteUrl = resolveAbsoluteUrl(src);
+        return { url: absoluteUrl, type, el };
     }
 
-    // Sort media by area, largest first
-    mediaList.sort((a, b) => b.area - a.area);
+    function hasValidSource(el) {
+        if (el.src || el.currentSrc || el.tagName.toLowerCase() === 'video') return true;
+        const source = el.querySelector('source');
+        return source && (source.src || source.srcset);
+    }
 
-    // Site Specific Extractors
-    const hostname = window.location.hostname;
+    // --- Site-Specific Extractors ---
+    function extractSiteSpecificProminent() {
+        const hostname = window.location.hostname;
 
-    if (hostname.includes('deviantart.com')) {
-        const mainImage = document.querySelector('img[data-hook="art_stage"], img[fetchpriority="high"]');
-        if (mainImage) {
-             const data = getHighestResolutionSource(mainImage);
-             strictProminent = { ...data, isIgnored: false, area: 9999999 };
+        if (hostname.includes('deviantart.com')) {
+            const el = document.querySelector(SITE_SELECTORS.DEVIANTART);
+            return el ? { ...getHighestResolutionSource(el), isIgnored: false, area: Infinity } : null;
         }
-    } else if (hostname.includes('reddit.com')) {
-        // Reddit galleries or single posts
-        const postMedia = Array.from(document.querySelectorAll('shreddit-post img, shreddit-post video, [data-test-id="post-content"] img, [data-test-id="post-content"] video'));
-        let largestRedditArea = 0;
-        for (let m of postMedia) {
-            if (shouldIgnoreElement(m)) continue;
-            const mData = getHighestResolutionSource(m);
-            if (!mData.url) continue;
 
-            const rect = m.getBoundingClientRect();
+        if (hostname.includes('google.com')) {
+            const el = document.querySelector(SITE_SELECTORS.GOOGLE);
+            return el ? { ...getHighestResolutionSource(el), isIgnored: false, area: Infinity } : null;
+        }
+
+        const selectorsMap = {
+            'reddit.com': SITE_SELECTORS.REDDIT,
+            'midjourney.com': SITE_SELECTORS.MIDJOURNEY
+        };
+
+        const targetSelector = Object.keys(selectorsMap).find(host => hostname.includes(host));
+
+        if (targetSelector) {
+            const elements = Array.from(document.querySelectorAll(selectorsMap[targetSelector]));
+            let largestElement = null;
+            let maxArea = 0;
+
+            for (const el of elements) {
+                if (shouldIgnoreElement(el)) continue;
+
+                const mediaData = getHighestResolutionSource(el);
+                if (!mediaData.url) continue;
+
+                const rect = el.getBoundingClientRect();
+                const area = rect.width * rect.height;
+
+                if (area > maxArea) {
+                    maxArea = area;
+                    largestElement = {
+                        url: mediaData.url,
+                        type: mediaData.type,
+                        width: rect.width,
+                        height: rect.height,
+                        isIgnored: false,
+                        area: Infinity
+                    };
+                }
+            }
+            return largestElement;
+        }
+
+        return null;
+    }
+
+    // --- Main Extraction Orchestrator ---
+    function extractMedia() {
+        const rawElements = Array.from(document.querySelectorAll('img, video'));
+        const mediaListMap = new Map(); // Deduplication using Map
+
+        for (const el of rawElements) {
+            if (!hasValidSource(el)) continue;
+
+            const rect = el.getBoundingClientRect();
             const area = rect.width * rect.height;
-            if (area > largestRedditArea) {
-                largestRedditArea = area;
-                strictProminent = { url: mData.url, type: mData.type, width: rect.width, height: rect.height, isIgnored: false, area: 9999999 };
+
+            if (area <= 0) continue;
+
+            const mediaData = getHighestResolutionSource(el);
+            if (!mediaData.url) continue;
+
+            const isIgnored = shouldIgnoreElement(el);
+
+            if (!mediaListMap.has(mediaData.url)) {
+                mediaListMap.set(mediaData.url, {
+                    url: mediaData.url,
+                    type: mediaData.type,
+                    width: rect.width,
+                    height: rect.height,
+                    isIgnored: isIgnored,
+                    area: area
+                });
             }
         }
-    } else if (hostname.includes('midjourney.com')) {
-        const gridImages = Array.from(document.querySelectorAll('[role="gridcell"] img'));
-        let mjLargest = 0;
-        for (let m of gridImages) {
-             if (shouldIgnoreElement(m)) continue;
-             const mData = getHighestResolutionSource(m);
-             if (!mData.url) continue;
 
-             const rect = m.getBoundingClientRect();
-             const area = rect.width * rect.height;
-             if (area > mjLargest) {
-                 mjLargest = area;
-                 strictProminent = { url: mData.url, type: mData.type, width: rect.width, height: rect.height, isIgnored: false, area: 9999999 };
-             }
+        const mediaList = Array.from(mediaListMap.values()).sort((a, b) => b.area - a.area);
+
+        let strictProminent = extractSiteSpecificProminent();
+
+        if (!strictProminent && mediaList.length > 0) {
+            const nonIgnored = mediaList.find(m => !m.isIgnored);
+            strictProminent = nonIgnored || mediaList[0];
         }
-    } else if (hostname.includes('google.com')) {
-         const mainImage = document.querySelector('img[jsname="kn3ccd"]');
-         if (mainImage) {
-             const data = getHighestResolutionSource(mainImage);
-             strictProminent = { ...data, isIgnored: false, area: 9999999 };
-         }
+
+        return {
+            mediaList: mediaList,
+            galleries: mediaList.filter(m => !m.isIgnored),
+            strictProminent: strictProminent ? [strictProminent] : []
+        };
     }
 
-    // If we didn't find a strict prominent via site rules, use the largest non-ignored element
-    if (!strictProminent) {
-        const nonIgnored = mediaList.filter(m => !m.isIgnored);
-        if (nonIgnored.length > 0) {
-            strictProminent = nonIgnored[0];
-        } else if (mediaList.length > 0) {
-            strictProminent = mediaList[0];
+    // --- Message Listener ---
+    chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
+        if (!isValidRequest(request)) {
+            sendResponse({ error: 'Invalid request format' });
+            return false;
         }
-    }
 
-    const galleries = mediaList.filter(m => !m.isIgnored);
+        if (request.action === "extractMedia") {
+            try {
+                const data = extractMedia();
+                sendResponse(data);
+            } catch (error) {
+                sendResponse({ error: 'Extraction failed' });
+            }
+        }
 
-    return {
-        mediaList: mediaList, // All media found
-        galleries: galleries, // Filtered by heuristics
-        strictProminent: strictProminent ? [strictProminent] : []
-    };
-}
-
-// Receive message from background script
-chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
-    if (request.action === "extractMedia") {
-        const data = extractMedia();
-        sendResponse(data);
-    }
-    return true; // Keep the message channel open for async sendResponse if needed
-});
+        return false; // Sync response
+    });
 
 })();
