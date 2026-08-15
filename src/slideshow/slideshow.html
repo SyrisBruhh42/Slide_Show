@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Media Isolator Slideshow</title>
+    <link rel="stylesheet" href="slideshow.css">
+</head>
+<body>
+    <div id="slideshow-container">
+        <!-- Media elements will be injected here -->
+        <div id="media-wrapper">
+            <img id="current-image" src="" style="display: none;" />
+            <video id="current-video" src="" style="display: none;" autoplay loop muted></video>
+        </div>
+
+        <!-- Controls Overlay -->
+        <div id="controls-overlay">
+            <button id="prev-btn" title="Previous (Left Arrow)">&#9664;</button>
+            <button id="play-pause-btn" title="Play/Pause (Spacebar)">&#10074;&#10074;</button>
+            <button id="next-btn" title="Next (Right Arrow)">&#9654;</button>
+        </div>
+    </div>
+
+    <!-- Sidebar Toggle -->
+    <div id="sidebar-toggle" title="Settings (S)">&#9881;</div>
+
+    <!-- Sidebar Settings -->
+    <div id="sidebar">
+        <h2>Settings</h2>
+
+        <div class="setting-group">
+            <label for="mode-select">Extraction Mode:</label>
+            <select id="mode-select">
+                <option value="galleries">Gallery (Heuristic Filtered)</option>
+                <option value="strictProminent">Strict Prominent (Single Main)</option>
+                <option value="mediaList">Loose (Everything)</option>
+            </select>
+        </div>
+
+        <div class="setting-group">
+            <label>Media Types:</label>
+            <div><input type="checkbox" id="type-image" checked> <label for="type-image">Images</label></div>
+            <div><input type="checkbox" id="type-gif" checked> <label for="type-gif">GIFs</label></div>
+            <div><input type="checkbox" id="type-video" checked> <label for="type-video">Videos</label></div>
+        </div>
+
+        <div class="setting-group">
+            <label for="timer-input">Slide Duration (s):</label>
+            <input type="number" id="timer-input" value="4" min="1" max="60">
+        </div>
+
+        <div class="setting-group">
+            <button id="download-current-btn">Download Current</button>
+        </div>
+
+        <div class="setting-group">
+            <label>Keybindings</label>
+            <div style="display:flex; justify-content:space-between; margin-bottom:5px;">
+                <span>Next:</span> <input type="text" id="key-next" value="ArrowRight" readonly class="keybind-input" style="width: 100px; text-align:center;">
+            </div>
+            <div style="display:flex; justify-content:space-between; margin-bottom:5px;">
+                <span>Prev:</span> <input type="text" id="key-prev" value="ArrowLeft" readonly class="keybind-input" style="width: 100px; text-align:center;">
+            </div>
+            <div style="display:flex; justify-content:space-between; margin-bottom:5px;">
+                <span>Play/Pause:</span> <input type="text" id="key-play" value=" " readonly class="keybind-input" style="width: 100px; text-align:center;">
+            </div>
+            <div style="display:flex; justify-content:space-between; margin-bottom:5px;">
+                <span>Speed Up:</span> <input type="text" id="key-speedup" value="ArrowUp" readonly class="keybind-input" style="width: 100px; text-align:center;">
+            </div>
+            <div style="display:flex; justify-content:space-between; margin-bottom:5px;">
+                <span>Speed Down:</span> <input type="text" id="key-speeddown" value="ArrowDown" readonly class="keybind-input" style="width: 100px; text-align:center;">
+            </div>
+            <div style="display:flex; justify-content:space-between; margin-bottom:5px;">
+                <span>Sidebar:</span> <input type="text" id="key-sidebar" value="s" readonly class="keybind-input" style="width: 100px; text-align:center;">
+            </div>
+            <div class="info-text" style="margin-top:10px;">Click a box and press a key to remap. Space is represented as " ".</div>
+        </div>
+    </div>
+
+    <script src="slideshow.js"></script>
+</body>
+</html>

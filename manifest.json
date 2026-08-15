@@ -1,0 +1,23 @@
+{
+  "manifest_version": 3,
+  "name": "Media Isolator & Slideshow",
+  "version": "1.0.0",
+  "description": "Intelligently extracts main media from web pages and displays it in a highly customizable, high-resolution slideshow.",
+  "permissions": [
+    "activeTab",
+    "storage",
+    "scripting",
+    "downloads"
+  ],
+  "action": {
+    "default_title": "Extract Media & Start Slideshow"
+  },
+  "background": {
+    "service_worker": "src/background/background.js"
+  },
+  "icons": {
+    "16": "src/assets/icons/icon16.png",
+    "48": "src/assets/icons/icon48.png",
+    "128": "src/assets/icons/icon128.png"
+  }
+}
