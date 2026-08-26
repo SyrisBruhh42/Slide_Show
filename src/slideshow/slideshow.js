@@ -73,6 +73,8 @@ async function showMedia(index) {
         return;
     }
 
+    // AUDIT: Security (XSS/Protocol) - Critical vulnerability if `media.url` contains `javascript:...` and is somehow injected into an execution context, or `file://` URLs allowing local file access. Must strictly ensure the URL starts with http://, https://, or data:image/.
+
     // UI Transitions and Loading State
     elements.img.classList.remove('loaded');
     elements.video.classList.remove('loaded');
@@ -162,6 +164,7 @@ function downloadCurrent() {
 
     const media = state.currentPlaylist[state.currentIndex];
     if (media && media.url) {
+        // AUDIT: Security (Path Traversal/Download Abuse) - Need to validate `media.url` before triggering a download to prevent triggering unintended schemes or downloading local system files if a `file://` URL somehow made it this far.
         chrome.downloads.download({ url: media.url }, (downloadId) => {
             if (chrome.runtime.lastError) {
                 logger.error('Download failed', { error: chrome.runtime.lastError.message, url: media.url });
@@ -264,6 +267,7 @@ function updateKeybindUI() {
 }
 
 function showEmptyState() {
+    // AUDIT: Antifragility - If `elements.emptyState` was removed from the DOM dynamically (e.g. by another extension), this will throw and break the entire function. Better to add optional chaining `elements.emptyState?.style...`
     elements.img.style.display = 'none';
     elements.video.style.display = 'none';
     elements.spinner.style.display = 'none';
@@ -288,6 +292,7 @@ function preloadNextMedia() {
 }
 
 function saveKeybinds() {
+    // AUDIT: Scalability & Limits - `chrome.storage.local.set` can hit quota limits if called too rapidly (e.g., holding down a key on a keybind input). Consider debouncing this call.
     chrome.storage.local.set({ keybinds: state.keybinds }, () => {
         if (chrome.runtime.lastError) {
             logger.error('Failed to save keybinds', { error: chrome.runtime.lastError.message });

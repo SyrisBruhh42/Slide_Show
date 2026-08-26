@@ -8,8 +8,15 @@
 chrome.action.onClicked.addListener(handleIconClick);
 
 async function handleIconClick(tab) {
+    // AUDIT: Security & Antifragility - Validating `tab` and `tab.id` is critical. If `chrome.action.onClicked` fires in an unexpected context (e.g. extension page without tab info), this crashes.
+    if (!tab || typeof tab.id !== 'number') {
+        logger.error('Invalid tab context provided to handleIconClick.', { tab });
+        return;
+    }
+
+    // AUDIT: Security - `isRestrictedUrl` protects against injection into `chrome://` pages, but could be bypassed if the URL parser fails. We should fail-closed instead of fail-open.
     if (isRestrictedUrl(tab.url)) {
-        logger.warn('Cannot inject content script into privileged or invalid pages.', { isPrivileged: true });
+        logger.warn('Cannot inject content script into privileged or invalid pages.', { url: tab.url, isPrivileged: true });
         return;
     }
 
@@ -17,6 +24,7 @@ async function handleIconClick(tab) {
         await injectContentScript(tab.id);
 
         const mediaData = await extractMediaFromTab(tab.id);
+        // AUDIT: Security - `validateExtractedData` currently has no real validation inside it (empty). This is a severe vulnerability as it allows potentially malicious data from the content script (and thereby the web page) to enter local storage and eventually the UI.
         validateExtractedData(mediaData);
 
         await setStorageData({ extractedMediaData: mediaData });
@@ -89,9 +97,11 @@ function isRestrictedUrl(url) {
     if (!url) return true;
     try {
         const parsedUrl = new URL(url);
+        // AUDIT: Security - Matching protocols should be robust. E.g., `RESTRICTED_SCHEMES.some(scheme => parsedUrl.protocol.startsWith(scheme))` or exact match if schemes include the colon.
+        // Also need to check if the scheme is 'http:' or 'https:'. If it's something like 'file:', it might be restricted based on permissions.
         return RESTRICTED_SCHEMES.includes(parsedUrl.protocol);
     } catch (err) {
-        return true;
+        return true; // Fail closed
     }
 }
 
@@ -99,6 +109,7 @@ function validateExtractedData(data) {
     if (!data || typeof data !== 'object') {
         throw new ValidationError('Invalid data format received from content script.');
     }
+    // AUDIT: Security - Zero-trust validation required here. We must validate the shape of `data` (e.g., ensure `data.mediaList` is an array, validate every item in the array for string URLs to prevent XSS via javascript: URIs or malicious object injection). Currently, this just accepts any object.
     // Ensures boundaries are met before storing.
 }
 
