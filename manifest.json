@@ -3,6 +3,7 @@
   "name": "Media Isolator & Slideshow",
   "version": "1.0.0",
   "description": "Intelligently extracts main media from web pages and displays it in a highly customizable, high-resolution slideshow.",
+  "author": "Media Isolator Team",
   "permissions": [
     "activeTab",
     "storage",
@@ -19,5 +20,11 @@
     "16": "src/assets/icons/icon16.png",
     "48": "src/assets/icons/icon48.png",
     "128": "src/assets/icons/icon128.png"
+  },
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "media-isolator@example.com",
+      "strict_min_version": "109.0"
+    }
   }
 }
