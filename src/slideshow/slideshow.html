@@ -10,8 +10,18 @@
     <div id="slideshow-container">
         <!-- Media elements will be injected here -->
         <div id="media-wrapper">
+            <div id="loading-spinner" class="spinner" style="display: none;"></div>
             <img id="current-image" src="" style="display: none;" />
             <video id="current-video" src="" style="display: none;" autoplay loop muted></video>
+
+            <!-- Empty State / Error UI -->
+            <div id="empty-state" style="display: none;">
+                <div class="empty-state-content">
+                    <span class="empty-icon">&#128065;</span>
+                    <h3 id="empty-title">No Media Found</h3>
+                    <p id="empty-message">We couldn't find any media matching your current filters.</p>
+                </div>
+            </div>
         </div>
 
         <!-- Controls Overlay -->
@@ -48,6 +58,12 @@
         <div class="setting-group">
             <label for="timer-input">Slide Duration (s):</label>
             <input type="number" id="timer-input" value="4" min="1" max="60">
+        </div>
+
+        <div class="setting-group">
+            <label for="auto-fullscreen">
+                <input type="checkbox" id="auto-fullscreen"> Auto-Fullscreen on Play
+            </label>
         </div>
 
         <div class="setting-group">
