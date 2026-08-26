@@ -31,10 +31,12 @@
 
     // --- Main Extraction Orchestrator ---
     function extractMedia() {
+        // AUDIT: Performance & Antifragility - `querySelectorAll('img, video')` on extremely large DOMs (e.g., infinite scrolling pages like Twitter/Reddit) will return thousands of elements and block the main thread. Need a limit (e.g., first 500) or chunked yielding with `requestIdleCallback`.
         const rawElements = Array.from(document.querySelectorAll(TARGET_SELECTORS.ALL_MEDIA));
         const mediaListMap = new Map(); // Deduplication using Map
 
         for (const el of rawElements) {
+            // AUDIT: Security (DOM Clobbering) - Avoid interacting with properties directly off the element if possible, or validate them. An attacker can set `<img id="src">` which clobbers `el.src`. Using `el.getAttribute('src')` is safer against clobbering.
             if (!hasValidSource(el)) continue;
 
             const rect = el.getBoundingClientRect();
@@ -130,11 +132,15 @@
 
     // --- Core Utility Functions ---
     function getHighestResolutionSource(el) {
+        // AUDIT: Security (DOM Clobbering) - `el.src` and `el.currentSrc` can be clobbered by children or attributes with the same name/id on forms or other complex elements. Use `el.getAttribute('src')` and handle relative paths manually, or safely access properties.
         let src = el.src || el.currentSrc;
+
+        // AUDIT: Antifragility - If `tagName` is clobbered or overridden, `toLowerCase()` will throw. Better to use `Object.prototype.toString.call(el)` or checking `instanceof HTMLImageElement`.
         const tagName = el.tagName.toLowerCase();
         let type = determineMediaType(src, tagName);
 
         if (type === MEDIA_TYPES.IMAGE) {
+            // AUDIT: Security - Clobbering risk on `el.srcset`. Safer: `el.getAttribute('srcset')`.
             if (el.srcset) {
                 const largestSrcset = getSrcsetLargest(el.srcset);
                 if (largestSrcset) src = largestSrcset;
@@ -147,6 +153,7 @@
             }
         }
 
+        // AUDIT: Security (SSRF/Protocol) - After resolving absolute URL, must ensure protocol is `http:` or `https:` or `data:`. Do not allow `javascript:` or `file:` URLs to propagate.
         const absoluteUrl = resolveAbsoluteUrl(src);
         return { url: absoluteUrl, type, el };
     }
@@ -226,6 +233,7 @@
 
     // --- Validation & Schemas ---
     function isValidRequest(request) {
+        // AUDIT: Security - While this checks the shape, any website can send messages via `window.postMessage` if the background script relays it improperly, or if the content script listens to `window.addEventListener('message')`. (Currently using `chrome.runtime.onMessage` which is safe from page context, but good to strictly validate action values).
         return request !== null && typeof request === 'object' && typeof request.action === 'string';
     }
 
