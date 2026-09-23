@@ -37,3 +37,77 @@ chrome.action.onClicked.addListener(async (tab) => {
         console.error("Failed to execute script:", e);
     }
 });
+
+// Listen for messages from the slideshow UI
+chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
+    if (request.action === "getTabs") {
+        chrome.tabs.query({}, (tabs) => {
+            sendResponse({ tabs: tabs });
+        });
+        return true; // Keep channel open for async
+    }
+
+    if (request.action === "extractFromTab") {
+        const tabId = request.tabId;
+
+        // Try sending message first in case script is already injected
+        chrome.tabs.sendMessage(tabId, { action: "extractMedia" }, (response) => {
+            if (chrome.runtime.lastError) {
+                // Not injected yet, inject it
+                chrome.scripting.executeScript({
+                    target: { tabId: tabId },
+                    files: ['src/content_scripts/content.js']
+                }).then(() => {
+                    chrome.tabs.sendMessage(tabId, { action: "extractMedia" }, (response) => {
+                        if (chrome.runtime.lastError) {
+                            sendResponse({ error: chrome.runtime.lastError.message });
+                        } else {
+                            sendResponse({ data: response });
+                        }
+                    });
+                }).catch(err => {
+                    sendResponse({ error: err.message });
+                });
+            } else {
+                sendResponse({ data: response });
+            }
+        });
+        return true; // Keep channel open
+    }
+
+    if (request.action === "extractFromUrl") {
+        const url = request.url;
+
+        // Create a new tab in the background (active: false)
+        chrome.tabs.create({ url: url, active: false }, (newTab) => {
+            // Wait for it to load completely
+            const listener = (tabId, changeInfo) => {
+                if (tabId === newTab.id && changeInfo.status === 'complete') {
+                    chrome.tabs.onUpdated.removeListener(listener);
+
+                    // Inject script and extract
+                    chrome.scripting.executeScript({
+                        target: { tabId: newTab.id },
+                        files: ['src/content_scripts/content.js']
+                    }).then(() => {
+                        chrome.tabs.sendMessage(newTab.id, { action: "extractMedia" }, (response) => {
+                            // Close the temporary tab immediately
+                            chrome.tabs.remove(newTab.id);
+
+                            if (chrome.runtime.lastError) {
+                                sendResponse({ error: chrome.runtime.lastError.message });
+                            } else {
+                                sendResponse({ data: response });
+                            }
+                        });
+                    }).catch(err => {
+                        chrome.tabs.remove(newTab.id);
+                        sendResponse({ error: err.message });
+                    });
+                }
+            };
+            chrome.tabs.onUpdated.addListener(listener);
+        });
+        return true; // Keep channel open
+    }
+});
