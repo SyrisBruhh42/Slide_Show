@@ -55,6 +55,40 @@
         </div>
 
         <div class="setting-group">
+            <h3>Multi-Tab & Auto-Load</h3>
+            <div id="tab-detector-section">
+                <p class="privacy-note" style="font-size: 0.8em; color: #ccc; margin-bottom: 5px;">Allow access to view your open tabs to pull images from other pages. Only tabs you select will be accessed.</p>
+                <button id="enable-tabs-btn">Enable Tab Selection</button>
+
+                <div id="tab-selection-ui" style="display: none; margin-top: 10px;">
+                    <label>
+                        <input type="checkbox" id="same-domain-only" checked>
+                        Same domain only
+                    </label>
+                    <button id="refresh-tabs-btn" style="margin-top: 5px; width: 100%;">Refresh Tabs</button>
+                    <ul id="tab-list" class="tab-list" style="list-style: none; padding: 0; max-height: 150px; overflow-y: auto; margin-top: 5px;"></ul>
+                </div>
+            </div>
+
+            <hr style="border-color: #444; margin: 15px 0;">
+
+            <div id="auto-load-section">
+                <label>
+                    <input type="checkbox" id="auto-load-next">
+                    Auto-Load Next Page
+                </label>
+                <div id="auto-load-options" style="display: none; margin-top: 10px;">
+                    <label>Max Pages to Load:</label>
+                    <input type="number" id="max-pages-input" value="5" min="1" max="50" style="width: 50px;">
+                    <br><br>
+                    <label>Target Image Count:</label>
+                    <input type="number" id="target-images-input" value="100" min="10" style="width: 50px;">
+                    <p class="privacy-note" id="auto-load-status" style="font-size: 0.8em; color: #ccc; margin-top: 5px;">Ready to load.</p>
+                </div>
+            </div>
+        </div>
+
+        <div class="setting-group">
             <label>Keybindings</label>
             <div style="display:flex; justify-content:space-between; margin-bottom:5px;">
                 <span>Next:</span> <input type="text" id="key-next" value="ArrowRight" readonly class="keybind-input" style="width: 100px; text-align:center;">

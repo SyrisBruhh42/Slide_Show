@@ -31,6 +31,24 @@ const typeVideoCb = document.getElementById('type-video');
 const timerInput = document.getElementById('timer-input');
 const downloadBtn = document.getElementById('download-current-btn');
 
+// Auto-Load State
+let autoLoadActive = false;
+let pagesLoaded = 0;
+let isExtracting = false;
+let originalDomain = "";
+
+// DOM Elements - New ones
+const enableTabsBtn = document.getElementById('enable-tabs-btn');
+const tabSelectionUi = document.getElementById('tab-selection-ui');
+const refreshTabsBtn = document.getElementById('refresh-tabs-btn');
+const tabList = document.getElementById('tab-list');
+const sameDomainOnlyCb = document.getElementById('same-domain-only');
+const autoLoadNextCb = document.getElementById('auto-load-next');
+const autoLoadOptions = document.getElementById('auto-load-options');
+const maxPagesInput = document.getElementById('max-pages-input');
+const targetImagesInput = document.getElementById('target-images-input');
+const autoLoadStatus = document.getElementById('auto-load-status');
+
 // Initialization
 document.addEventListener('DOMContentLoaded', () => {
     // Load extracted data and settings from storage
@@ -42,6 +60,11 @@ document.addEventListener('DOMContentLoaded', () => {
 
         if (result.extractedMediaData) {
             rawMediaData = result.extractedMediaData;
+            if (rawMediaData.pageUrl) {
+                try {
+                    originalDomain = new URL(rawMediaData.pageUrl).hostname;
+                } catch(e) {}
+            }
             buildPlaylist();
             showMedia(0);
             startSlideshow();
@@ -51,6 +74,7 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 
     setupEventListeners();
+    setupMultiTabListeners();
 });
 
 function updateKeybindUI() {
@@ -60,6 +84,183 @@ function updateKeybindUI() {
     document.getElementById('key-speedup').value = keybinds.speedup;
     document.getElementById('key-speeddown').value = keybinds.speeddown;
     document.getElementById('key-sidebar').value = keybinds.sidebar;
+}
+
+function setupMultiTabListeners() {
+    enableTabsBtn.addEventListener('click', () => {
+        enableTabsBtn.style.display = 'none';
+        tabSelectionUi.style.display = 'block';
+        refreshTabs();
+    });
+
+    refreshTabsBtn.addEventListener('click', refreshTabs);
+    sameDomainOnlyCb.addEventListener('change', refreshTabs);
+
+    autoLoadNextCb.addEventListener('change', (e) => {
+        autoLoadActive = e.target.checked;
+        autoLoadOptions.style.display = autoLoadActive ? 'block' : 'none';
+
+        if (autoLoadActive && !isExtracting) {
+            checkAndLoadNextPage();
+        }
+    });
+
+    maxPagesInput.addEventListener('change', () => {
+        if (autoLoadActive && !isExtracting) checkAndLoadNextPage();
+    });
+
+    targetImagesInput.addEventListener('change', () => {
+        if (autoLoadActive && !isExtracting) checkAndLoadNextPage();
+    });
+}
+
+function refreshTabs() {
+    chrome.runtime.sendMessage({ action: "getTabs" }, (response) => {
+        if (response && response.tabs) {
+            tabList.innerHTML = '';
+
+            const filteredTabs = response.tabs.filter(tab => {
+                // Don't show the slideshow tab itself
+                if (tab.url === window.location.href) return false;
+
+                if (sameDomainOnlyCb.checked && originalDomain) {
+                    try {
+                        const tabDomain = new URL(tab.url).hostname;
+                        return tabDomain === originalDomain;
+                    } catch(e) {
+                        return false; // skip invalid urls
+                    }
+                }
+                return true;
+            });
+
+            if (filteredTabs.length === 0) {
+                tabList.innerHTML = '<li class="info-text">No tabs found matching criteria.</li>';
+                return;
+            }
+
+            filteredTabs.forEach(tab => {
+                const li = document.createElement('li');
+                li.className = 'tab-list-item';
+
+                const titleSpan = document.createElement('span');
+                titleSpan.textContent = tab.title.length > 30 ? tab.title.substring(0, 30) + '...' : tab.title;
+                titleSpan.title = tab.title;
+
+                const addBtn = document.createElement('button');
+                addBtn.textContent = 'Add Media';
+                addBtn.onclick = () => {
+                    addBtn.disabled = true;
+                    addBtn.textContent = 'Adding...';
+                    extractFromTabId(tab.id, addBtn);
+                };
+
+                li.appendChild(titleSpan);
+                li.appendChild(addBtn);
+                tabList.appendChild(li);
+            });
+        }
+    });
+}
+
+function mergeMediaData(newData) {
+    if (!newData) return;
+
+    let addedCount = 0;
+
+    ['mediaList', 'galleries', 'strictProminent'].forEach(key => {
+        if (newData[key]) {
+            newData[key].forEach(newItem => {
+                // Check for duplicates
+                const exists = rawMediaData[key].some(existingItem => existingItem.url === newItem.url);
+                if (!exists) {
+                    rawMediaData[key].push(newItem);
+                    addedCount++;
+                }
+            });
+        }
+    });
+
+    if ('nextPageUrl' in newData) {
+        rawMediaData.nextPageUrl = newData.nextPageUrl;
+    }
+
+    if (addedCount > 0) {
+        // Rebuild playlist without interrupting current index completely
+        const oldUrl = currentPlaylist.length > 0 ? currentPlaylist[currentIndex].url : null;
+
+        buildPlaylist();
+
+        // Try to maintain current image if possible
+        if (oldUrl) {
+            const newIndex = currentPlaylist.findIndex(m => m.url === oldUrl);
+            if (newIndex !== -1) {
+                currentIndex = newIndex;
+            }
+        }
+    }
+
+    return addedCount;
+}
+
+function extractFromTabId(tabId, btnElement) {
+    chrome.runtime.sendMessage({ action: "extractFromTab", tabId: tabId }, (response) => {
+        if (response && response.data) {
+            mergeMediaData(response.data);
+            if (btnElement) {
+                btnElement.textContent = 'Done';
+                btnElement.style.background = '#666';
+            }
+        } else {
+            if (btnElement) {
+                btnElement.textContent = 'Error';
+                btnElement.style.background = '#f44336';
+            }
+        }
+    });
+}
+
+function checkAndLoadNextPage() {
+    if (!autoLoadActive || isExtracting || !rawMediaData) return;
+
+    const maxPages = parseInt(maxPagesInput.value, 10);
+    const targetImages = parseInt(targetImagesInput.value, 10);
+
+    if (pagesLoaded >= maxPages) {
+        autoLoadStatus.textContent = `Reached max pages (${maxPages}).`;
+        return;
+    }
+
+    if (currentPlaylist.length >= targetImages) {
+        autoLoadStatus.textContent = `Reached target images (${currentPlaylist.length}/${targetImages}).`;
+        return;
+    }
+
+    if (!rawMediaData.nextPageUrl) {
+        autoLoadStatus.textContent = "No 'Next Page' link detected.";
+        return;
+    }
+
+    // Load next page
+    isExtracting = true;
+    autoLoadStatus.textContent = `Loading page ${pagesLoaded + 1} of ${maxPages}...`;
+
+    chrome.runtime.sendMessage({ action: "extractFromUrl", url: rawMediaData.nextPageUrl }, (response) => {
+        isExtracting = false;
+
+        if (response && response.data) {
+            pagesLoaded++;
+            mergeMediaData(response.data);
+            autoLoadStatus.textContent = `Successfully added media. Current total: ${currentPlaylist.length}`;
+
+            // Check again recursively
+            setTimeout(() => {
+                checkAndLoadNextPage();
+            }, 1000); // small delay to not spam
+        } else {
+            autoLoadStatus.textContent = `Error loading next page: ${response ? response.error : 'Unknown'}`;
+        }
+    });
 }
 
 function saveKeybinds() {

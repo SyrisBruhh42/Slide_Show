@@ -193,10 +193,42 @@ function extractMedia() {
 
     const galleries = mediaList.filter(m => !m.isIgnored);
 
+    // Heuristics for Next Page detection
+    let nextPageUrl = null;
+
+    // 1. Check for rel="next"
+    const nextLinkRel = document.querySelector('a[rel="next"], link[rel="next"]');
+    if (nextLinkRel && nextLinkRel.href) {
+        nextPageUrl = nextLinkRel.href;
+    }
+
+    // 2. Check for common text / classes
+    if (!nextPageUrl) {
+        const anchors = Array.from(document.querySelectorAll('a'));
+        const nextTerms = ['next', 'next page', '>', '»', '→', 'next >'];
+
+        for (const a of anchors) {
+            const text = a.innerText.trim().toLowerCase();
+            const classStr = (a.className || '').toString().toLowerCase();
+            const idStr = (a.id || '').toLowerCase();
+
+            // Check if text matches common next terms, or class/id indicates next
+            if (nextTerms.includes(text) || classStr.includes('next') || idStr.includes('next')) {
+                // Ensure it looks like a valid pagination link (often pointing to the same site but different page)
+                if (a.href && !a.href.startsWith('javascript:') && !a.href.startsWith('#')) {
+                    nextPageUrl = a.href;
+                    break;
+                }
+            }
+        }
+    }
+
     return {
         mediaList: mediaList, // All media found
         galleries: galleries, // Filtered by heuristics
-        strictProminent: strictProminent ? [strictProminent] : []
+        strictProminent: strictProminent ? [strictProminent] : [],
+        nextPageUrl: nextPageUrl,
+        pageUrl: window.location.href // Pass the current page URL too
     };
 }
 
