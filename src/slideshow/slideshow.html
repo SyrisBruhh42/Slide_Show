@@ -27,13 +27,17 @@
         <!-- Controls Overlay -->
         <div id="controls-overlay">
             <button id="prev-btn" title="Previous (Left Arrow)">&#9664;</button>
-            <button id="play-pause-btn" title="Play/Pause (Spacebar)">&#10074;&#10074;</button>
+            <button id="play-pause-btn" title="Play/Pause (Spacebar)">&#9654;</button>
             <button id="next-btn" title="Next (Right Arrow)">&#9654;</button>
         </div>
     </div>
 
+    <div id="collection-info"><span id="position"></span> · <a id="source-link" href="#" target="_blank" rel="noopener noreferrer">Open source</a>
+        <button id="fullscreen-btn" type="button">Fullscreen</button>
+        <p id="media-status" role="status" aria-live="polite"></p>
+    </div>
     <!-- Sidebar Toggle -->
-    <div id="sidebar-toggle" title="Settings (S)">&#9881;</div>
+    <button id="sidebar-toggle" title="Settings (S)" aria-label="Settings">&#9881;</button>
 
     <!-- Sidebar Settings -->
     <div id="sidebar">
@@ -42,9 +46,9 @@
         <div class="setting-group">
             <label for="mode-select">Extraction Mode:</label>
             <select id="mode-select">
-                <option value="galleries">Gallery (Heuristic Filtered)</option>
-                <option value="strictProminent">Strict Prominent (Single Main)</option>
-                <option value="mediaList">Loose (Everything)</option>
+                <option value="galleries">Original collection</option>
+                <option value="strictProminent">Largest image</option>
+                <option value="mediaList">All loaded media</option>
             </select>
         </div>
 
@@ -94,6 +98,7 @@
         </div>
     </div>
 
+    <script src="../shared/media.js"></script>
     <script src="slideshow.js"></script>
 </body>
 </html>
