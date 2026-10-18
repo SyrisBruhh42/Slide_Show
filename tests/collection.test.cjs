@@ -18,7 +18,7 @@ function element(tag, attrs, w, h) {
 }
 function collect(elements, request = { action: 'extractMedia' }, sender = { id: 'extension' }) {
     let listener, answer;
-    const context = vm.createContext({ URL, location: new URL('https://example.test/feed'),
+    const context = vm.createContext({ URL, crypto:webcrypto, location: new URL('https://example.test/feed'),
         document: { querySelectorAll: () => elements }, chrome: { runtime: { id:'extension', onMessage:{ addListener(fn){listener=fn;} } } } });
     vm.runInContext(shared, context); vm.runInContext(content, context);
     listener(request, sender, response => {answer = response;});
@@ -62,9 +62,9 @@ test('separate launches cannot replace another collection; closing removes only 
     const storage={},tabs=[];let click,remove;
     const ctx=vm.createContext({URL,crypto:webcrypto,console,importScripts(){},chrome:{
         action:{onClicked:{addListener(fn){click=fn;}},async setBadgeText(){},async setTitle(){}},
-        runtime:{getURL:p=>'chrome-extension://test/'+p},scripting:{async executeScript(){}},
-        storage:{session:{async set(values){Object.assign(storage,values);},async get(key){return {[key]:storage[key]};},async remove(keys){for(const key of [].concat(keys))delete storage[key];}}},
-        tabs:{async sendMessage(id){return {mediaList:[{url:`https://example.test/${id}.jpg`,type:'image'}]};},async get(id){return tabs.find(t=>t.id===id);},async create(tab){const result={...tab,id:100+tabs.length};tabs.push(result);return result;},onRemoved:{addListener(fn){remove=fn;}}}
+        runtime:{id:'extension',onMessage:{addListener(){}},getURL:p=>'chrome-extension://test/'+p},scripting:{async executeScript(){}},
+        storage:{session:{async set(values){Object.assign(storage,values);},async get(key){return Object.fromEntries([].concat(key).map(k=>[k,storage[k]]));},async remove(keys){for(const key of [].concat(keys))delete storage[key];}}},
+        tabs:{async sendMessage(id){return {data:{mediaList:[{url:`https://example.test/${id}.jpg`,type:'image'}],sourceUrl:`https://example.test/${id}`},documentId:'document-'+id,sourceKey:`https://example.test/${id}`};},async get(id){return tabs.find(t=>t.id===id);},async create(tab){const result={...tab,id:100+tabs.length};tabs.push(result);return result;},onRemoved:{addListener(fn){remove=fn;}}}
     }});
     vm.runInContext(shared,ctx);vm.runInContext(fs.readFileSync(path.join(root,'src/background/background.js'),'utf8'),ctx);
     await Promise.all([click({id:1,url:'https://example.test/a'}),click({id:2,url:'https://example.test/b'})]);
@@ -92,9 +92,9 @@ test('failed viewer mapping and closure during creation both reclaim their sessi
         const storage={};let click,remove;
         const ctx=vm.createContext({URL,crypto:webcrypto,console:{error(){}},importScripts(){},chrome:{
             action:{onClicked:{addListener(fn){click=fn;}},async setBadgeText(){},async setTitle(){}},
-            runtime:{getURL:p=>'chrome-extension://test/'+p},scripting:{async executeScript(){}},
-            storage:{session:{async set(values){if(scenario==='mapping-failure'&&Object.keys(values)[0].startsWith('viewer:'))throw new Error('fixture quota');Object.assign(storage,values);},async get(key){return {[key]:storage[key]};},async remove(keys){for(const k of [].concat(keys))delete storage[k];}}},
-            tabs:{async sendMessage(){return {mediaList:[{url:'https://example.test/a.jpg',type:'image'}]};},async create(){if(scenario==='early-close')await remove(100);return {id:100};},async get(){if(scenario==='early-close')throw new Error('No tab');return{id:100};},onRemoved:{addListener(fn){remove=fn;}}}
+            runtime:{id:'extension',onMessage:{addListener(){}},getURL:p=>'chrome-extension://test/'+p},scripting:{async executeScript(){}},
+            storage:{session:{async set(values){if(scenario==='mapping-failure'&&Object.keys(values)[0].startsWith('viewer:'))throw new Error('fixture quota');Object.assign(storage,values);},async get(key){return Object.fromEntries([].concat(key).map(k=>[k,storage[k]]));},async remove(keys){for(const k of [].concat(keys))delete storage[k];}}},
+            tabs:{async sendMessage(){return {data:{mediaList:[{url:'https://example.test/a.jpg',type:'image'}],sourceUrl:'https://example.test/feed'},documentId:'document',sourceKey:'https://example.test/feed'};},async create(){if(scenario==='early-close')await remove(100);return {id:100};},async get(){if(scenario==='early-close')throw new Error('No tab');return{id:100};},onRemoved:{addListener(fn){remove=fn;}}}
         }});
         vm.runInContext(shared,ctx);vm.runInContext(fs.readFileSync(path.join(root,'src/background/background.js'),'utf8'),ctx);
         await click({id:1,url:'https://example.test/feed'});
