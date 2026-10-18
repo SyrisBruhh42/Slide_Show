@@ -7,23 +7,25 @@
 // --- High-Level Initialization & Orchestration ---
 document.addEventListener('DOMContentLoaded', initializeSlideshow);
 
-function initializeSlideshow() {
+async function initializeSlideshow() {
     setupEventListeners();
-
-    chrome.storage.local.get(['extractedMediaData', 'keybinds'], (result) => {
-        if (result.keybinds) {
-            state.updateKeybinds(result.keybinds);
-            updateKeybindUI();
-        }
-
-        if (result.extractedMediaData && validateMediaData(result.extractedMediaData)) {
-            state.setMediaData(result.extractedMediaData);
-            buildPlaylist();
-        } else {
-            logger.error("No valid media data found in local storage.");
-            showEmptyState();
-        }
-    });
+    try {
+        const settings = await chrome.storage.local.get(['keybinds']);
+        state.updateKeybinds(settings.keybinds);
+        updateKeybindUI();
+        const id = new URL(location.href).searchParams.get('collection');
+        if (!id || !/^[a-f0-9-]{36}$/i.test(id)) throw new Error('Open a collection from its source page.');
+        state.collectionKey = 'collection:' + id;
+        const saved = await chrome.storage.session.get([state.collectionKey, state.collectionKey + ':cursor']);
+        const data = MediaCollection.collection(saved[state.collectionKey]);
+        if (!data) throw new Error('This collection expired. Open it again from the source page.');
+        state.setMediaData(data);
+        state.savedCursor = saved[state.collectionKey + ':cursor'];
+        buildPlaylist();
+    } catch (error) {
+        showEmptyState();
+        elements.emptyMessage.textContent = error.message;
+    }
 }
 
 function buildPlaylist() {
@@ -44,14 +46,15 @@ function buildPlaylist() {
         return true;
     });
 
-    state.currentIndex = 0;
+    const previousUrl = state.savedCursor || state.currentUrl;
+    const previousIndex = state.currentPlaylist.findIndex(m => m.url === previousUrl);
+    state.currentIndex = previousIndex < 0 ? 0 : previousIndex;
+    state.savedCursor = null;
 
     if (state.currentPlaylist.length > 0) {
         hideEmptyState();
         showMedia(state.currentIndex);
-        if (!state.isPlaying) { // Auto-start if not already playing
-           startSlideshow();
-        }
+        if (state.isPlaying) startSlideshow();
     } else {
         stopSlideshow();
         showEmptyState();
@@ -73,9 +76,20 @@ async function showMedia(index) {
         return;
     }
 
-    // AUDIT: Security (XSS/Protocol) - Critical vulnerability if `media.url` contains `javascript:...` and is somehow injected into an execution context, or `file://` URLs allowing local file access. Must strictly ensure the URL starts with http://, https://, or data:image/.
+    state.currentUrl = media.url;
+    elements.position.textContent = `${state.currentIndex + 1} / ${state.currentPlaylist.length}`;
+    elements.sourceLink.href = media.sourceUrl || state.rawMediaData.sourceUrl || '#';
+    elements.mediaStatus.textContent = state.rawMediaData.truncated ? 'Collection limit reached. Some loaded items were omitted.' : '';
+    if (state.collectionKey) chrome.storage.session.set({[state.collectionKey + ':cursor']: media.url}).catch(error => {
+        elements.mediaStatus.textContent = 'Could not save position: ' + error.message;
+    });
+    const generation = ++state.generation;
 
     // UI Transitions and Loading State
+    elements.img.onload = null;
+    elements.img.onerror = null;
+    elements.video.onloadeddata = null;
+    elements.video.onerror = null;
     elements.img.classList.remove('loaded');
     elements.video.classList.remove('loaded');
     elements.spinner.style.display = 'block';
@@ -86,10 +100,16 @@ async function showMedia(index) {
 
         // Wait for video metadata to load before fading in
         elements.video.onloadeddata = () => {
+             if (generation !== state.generation) return;
              elements.spinner.style.display = 'none';
              elements.video.classList.add('loaded');
         };
 
+        elements.video.onerror = () => {
+            if (generation !== state.generation) return;
+            elements.spinner.style.display = 'none';
+            elements.mediaStatus.textContent = 'Video unavailable. Open its source or continue to the next item.';
+        };
         elements.video.src = media.url;
 
         try {
@@ -103,14 +123,24 @@ async function showMedia(index) {
         elements.img.style.display = 'block';
 
         // Wait for image to load before fading in
+        elements.img.alt = media.title || 'Selected image';
         elements.img.onload = () => {
+             if (generation !== state.generation) return;
              elements.spinner.style.display = 'none';
              elements.img.classList.add('loaded');
         };
+        let usedPreview = false;
         elements.img.onerror = () => {
+             if (generation !== state.generation) return;
+             if (!usedPreview && media.previewUrl && media.previewUrl !== media.url) {
+                 usedPreview = true;
+                 elements.mediaStatus.textContent = 'Full-size image unavailable; showing the page preview.';
+                 elements.img.src = media.previewUrl;
+                 return;
+             }
              elements.spinner.style.display = 'none';
-             logger.error('Failed to load image', { url: media.url });
-        }
+             elements.mediaStatus.textContent = 'Image unavailable. Open its source or continue to the next item.';
+        };
 
         elements.img.src = media.url;
     }
@@ -163,7 +193,7 @@ function downloadCurrent() {
     if (state.currentPlaylist.length === 0) return;
 
     const media = state.currentPlaylist[state.currentIndex];
-    if (media && media.url) {
+    if (media && MediaCollection.safeUrl(media.url)) {
         // AUDIT: Security (Path Traversal/Download Abuse) - Need to validate `media.url` before triggering a download to prevent triggering unintended schemes or downloading local system files if a `file://` URL somehow made it this far.
         chrome.downloads.download({ url: media.url }, (downloadId) => {
             if (chrome.runtime.lastError) {
@@ -175,10 +205,16 @@ function downloadCurrent() {
 
 // --- UI & Event Setup Utilities ---
 function setupEventListeners() {
+    elements.sidebar.inert = true;
+    elements.sidebarToggle.setAttribute('aria-expanded', 'false');
     elements.playPauseBtn.addEventListener('click', togglePlay);
+    elements.fullscreenBtn.addEventListener('click', () => {
+        const action = document.fullscreenElement ? document.exitFullscreen() : document.documentElement.requestFullscreen();
+        action.catch(error => { elements.mediaStatus.textContent = 'Fullscreen unavailable: ' + error.message; });
+    });
     elements.nextBtn.addEventListener('click', nextSlide);
     elements.prevBtn.addEventListener('click', prevSlide);
-    elements.sidebarToggle.addEventListener('click', () => elements.sidebar.classList.toggle('open'));
+    elements.sidebarToggle.addEventListener('click', toggleSidebar);
     elements.downloadBtn.addEventListener('click', downloadCurrent);
 
     elements.modeSelect.addEventListener('change', buildPlaylist);
@@ -189,6 +225,8 @@ function setupEventListeners() {
     elements.timerInput.addEventListener('change', (e) => {
         let val = parseInt(e.target.value, 10);
         if (isNaN(val) || val < 1) val = 1;
+        val = Math.min(val, 60);
+        elements.timerInput.value = val;
 
         state.timerDuration = Math.max(val * 1000, MIN_TIMER_DURATION_MS);
         if (state.isPlaying) startSlideshow();
@@ -218,6 +256,12 @@ function setupEventListeners() {
     document.addEventListener('keydown', handleGlobalKeydown);
 }
 
+function toggleSidebar() {
+    const open = elements.sidebar.classList.toggle('open');
+    elements.sidebar.inert = !open;
+    elements.sidebarToggle.setAttribute('aria-expanded', String(open));
+}
+
 function handleGlobalKeydown(e) {
     if (e.target.classList.contains('keybind-input')) return;
 
@@ -239,17 +283,17 @@ function handleGlobalKeydown(e) {
     } else if (key === state.keybinds.speedup) {
         e.preventDefault();
         const currentVal = parseInt(elements.timerInput.value, 10) || 1;
-        elements.timerInput.value = currentVal + 1;
+        elements.timerInput.value = Math.max(1, currentVal - 1);
         elements.timerInput.dispatchEvent(new Event('change'));
     } else if (key === state.keybinds.speeddown) {
         e.preventDefault();
         const currentVal = parseInt(elements.timerInput.value, 10) || 1;
-        if (currentVal > 1) {
-            elements.timerInput.value = currentVal - 1;
+        if (currentVal < 60) {
+            elements.timerInput.value = currentVal + 1;
             elements.timerInput.dispatchEvent(new Event('change'));
         }
     } else if (isSidebarKey) {
-        elements.sidebar.classList.toggle('open');
+        toggleSidebar();
     }
 }
 
@@ -269,6 +313,7 @@ function updateKeybindUI() {
 function showEmptyState() {
     // AUDIT: Antifragility - If `elements.emptyState` was removed from the DOM dynamically (e.g. by another extension), this will throw and break the entire function. Better to add optional chaining `elements.emptyState?.style...`
     elements.img.style.display = 'none';
+    elements.video.pause();
     elements.video.style.display = 'none';
     elements.spinner.style.display = 'none';
     elements.emptyState.style.display = 'block';
@@ -301,7 +346,7 @@ function saveKeybinds() {
 }
 
 function validateMediaData(data) {
-    return data && typeof data === 'object';
+    return MediaCollection.collection(data) !== null;
 }
 
 // --- Constants & Config ---
@@ -341,6 +386,9 @@ const logger = {
 class SlideshowState {
     constructor() {
         this.rawMediaData = null;
+        this.generation = 0;
+        this.currentUrl = null;
+        this.collectionKey = null;
         this.currentPlaylist = [];
         this.currentIndex = 0;
         this.isPlaying = false;
@@ -363,7 +411,9 @@ class SlideshowState {
 
     updateKeybinds(newKeybinds) {
         if (newKeybinds && typeof newKeybinds === 'object') {
-            this.keybinds = { ...this.keybinds, ...newKeybinds };
+            for (const action of Object.keys(this.keybinds)) {
+                if (typeof newKeybinds[action] === 'string' && newKeybinds[action].length > 0 && newKeybinds[action].length <= 32) this.keybinds[action] = newKeybinds[action];
+            }
         }
     }
 }
@@ -372,6 +422,11 @@ const state = new SlideshowState();
 
 // --- DOM Elements ---
 const elements = {
+    position: document.getElementById('position'),
+    sourceLink: document.getElementById('source-link'),
+    mediaStatus: document.getElementById('media-status'),
+    emptyMessage: document.getElementById('empty-message'),
+    fullscreenBtn: document.getElementById('fullscreen-btn'),
     img: document.getElementById('current-image'),
     video: document.getElementById('current-video'),
     spinner: document.getElementById('loading-spinner'),

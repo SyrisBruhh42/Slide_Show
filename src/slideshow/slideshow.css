@@ -206,3 +206,11 @@ button#download-current-btn:hover {
     color: #aaa;
     line-height: 1.5;
 }
+
+#collection-info { position: absolute; top: 16px; left: 16px; max-width: calc(100% - 100px); padding: 8px; background: #000a; font-size: 14px; }
+#collection-info a { color: #bbe4ff; }
+#collection-info button { margin-left: 12px; padding: 4px 8px; }
+#media-status { margin-top: 5px; }
+#controls-overlay:focus-within { opacity: 1; }
+#sidebar-toggle { color: white; border: 0; }
+button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible { outline: 3px solid #91d2ff; outline-offset: 3px; }
