@@ -46,8 +46,8 @@ function buildPlaylist() {
         return true;
     });
 
-    const previousUrl = state.savedCursor || state.currentUrl;
-    const previousIndex = state.currentPlaylist.findIndex(m => m.url === previousUrl);
+    const previousId = state.savedCursor || state.currentIdentity;
+    const previousIndex = state.currentPlaylist.findIndex(m => MediaCollection.identity(m) === previousId || m.url === previousId);
     state.currentIndex = previousIndex < 0 ? 0 : previousIndex;
     state.savedCursor = null;
 
@@ -77,10 +77,11 @@ async function showMedia(index) {
     }
 
     state.currentUrl = media.url;
+    state.currentIdentity = MediaCollection.identity(media);
     elements.position.textContent = `${state.currentIndex + 1} / ${state.currentPlaylist.length}`;
     elements.sourceLink.href = media.sourceUrl || state.rawMediaData.sourceUrl || '#';
     elements.mediaStatus.textContent = state.rawMediaData.truncated ? 'Collection limit reached. Some loaded items were omitted.' : '';
-    if (state.collectionKey) chrome.storage.session.set({[state.collectionKey + ':cursor']: media.url}).catch(error => {
+    if (state.collectionKey) chrome.storage.session.set({[state.collectionKey + ':cursor']: state.currentIdentity}).catch(error => {
         elements.mediaStatus.textContent = 'Could not save position: ' + error.message;
     });
     const generation = ++state.generation;
@@ -149,6 +150,24 @@ async function showMedia(index) {
 }
 
 // --- Playback Controls & Interactivity ---
+async function refreshCollection() {
+    if (!state.collectionKey || elements.refreshBtn.disabled) return;
+    elements.refreshBtn.disabled = true;
+    elements.mediaStatus.textContent = 'Checking the original page for loaded images…';
+    const before = state.rawMediaData.mediaList.length;
+    try {
+        const reply = await chrome.runtime.sendMessage({action:'refreshCollection', id:state.collectionKey.slice('collection:'.length)});
+        if (reply?.error) throw new Error(reply.error);
+        const data = MediaCollection.collection(reply?.data);
+        if (!data) throw new Error('No valid update was returned.');
+        state.setMediaData(data);
+        buildPlaylist();
+        elements.mediaStatus.textContent = data.truncated ? 'Collection limit reached. Existing items are preserved.' : `${data.mediaList.length - before} new items. Your place is preserved.`;
+    } catch (error) {
+        elements.mediaStatus.textContent = 'Saved collection kept. ' + error.message;
+    } finally { elements.refreshBtn.disabled = false; }
+}
+
 function startSlideshow() {
     if (state.slideInterval) clearInterval(state.slideInterval);
     state.isPlaying = true;
@@ -208,6 +227,7 @@ function setupEventListeners() {
     elements.sidebar.inert = true;
     elements.sidebarToggle.setAttribute('aria-expanded', 'false');
     elements.playPauseBtn.addEventListener('click', togglePlay);
+    elements.refreshBtn.addEventListener('click', refreshCollection);
     elements.fullscreenBtn.addEventListener('click', () => {
         const action = document.fullscreenElement ? document.exitFullscreen() : document.documentElement.requestFullscreen();
         action.catch(error => { elements.mediaStatus.textContent = 'Fullscreen unavailable: ' + error.message; });
@@ -388,6 +408,7 @@ class SlideshowState {
         this.rawMediaData = null;
         this.generation = 0;
         this.currentUrl = null;
+        this.currentIdentity = null;
         this.collectionKey = null;
         this.currentPlaylist = [];
         this.currentIndex = 0;
@@ -422,6 +443,7 @@ const state = new SlideshowState();
 
 // --- DOM Elements ---
 const elements = {
+    refreshBtn: document.getElementById('refresh-btn'),
     position: document.getElementById('position'),
     sourceLink: document.getElementById('source-link'),
     mediaStatus: document.getElementById('media-status'),
